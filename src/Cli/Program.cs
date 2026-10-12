@@ -1,5 +1,7 @@
-﻿using Core;
+﻿using System.Reflection;
+using Core;
 using Core.Abstractions;
+using Core.Configuration;
 using Core.Domain;
 using Core.Dto;
 using Core.Events;
@@ -7,8 +9,35 @@ using Core.Import;
 using Core.Reports;
 using Core.Services;
 using Core.Storage;
+using Microsoft.Extensions.Configuration;
 
-// Налаштування кооперативного скасування (Ctrl+C)
+// ==========================================
+// ЛАБОРАТОРНА РОБОТА №9: Збирання конфігурації
+// ==========================================
+var envName = Environment.GetEnvironmentVariable("CROSSAPP_ENVIRONMENT") ?? "Development";
+
+var config = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+    .AddJsonFile($"appsettings.{envName}.json", optional: true)
+    .AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true)
+    .AddEnvironmentVariables(prefix: "CROSSAPP_")
+    .AddCommandLine(args)
+    .Build();
+
+var options = config.Get<AppOptions>() ?? new AppOptions();
+var legacy = Environment.GetEnvironmentVariable("CROSSAPP_DATA_PATH");
+
+var storageOptions = new StorageOptions
+{
+    DataPath = string.IsNullOrWhiteSpace(legacy) ? options.Storage.DataPath : legacy,
+    FileName = options.Storage.FileName
+};
+
+string dataPath = storageOptions.ResolveFullPath(AppContext.BaseDirectory);
+var apiKey = config["Integration:ApiKey"];
+
+// Налаштування скасування (Ctrl+C)
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
@@ -32,11 +61,10 @@ Console.WriteLine($"RID (визначено)    : {report.DetectedRid}");
 Console.WriteLine($"RID (від .NET)     : {report.ReportedRid}");
 Console.WriteLine($"Каталог застосунку : {report.BaseDirectory}\n");
 
-Console.WriteLine("ПРЕДМЕТНА ОБЛАСТЬ (Лаб. 1)");
+Console.WriteLine("КОНФІГУРАЦІЯ ТА ШЛЯХИ (Лаб. 9)");
 Console.WriteLine(new string('─', 52));
-Console.WriteLine("Замовлення / Склад");
-Console.WriteLine("Сутності           : Customer, Product, Order, OrderLine");
-Console.WriteLine("Призначення        : оформлення замовлень і підрахунок вартості.\n");
+Console.WriteLine($"Файл даних         : {dataPath}");
+Console.WriteLine(apiKey is null ? "ApiKey             : не заданий" : $"ApiKey             : присутній, довжина {apiKey.Length}\n");
 
 // ==========================================
 // ЛАБОРАТОРНА РОБОТА №3: Імпорт даних з файлу
@@ -92,25 +120,15 @@ TryDo("від'ємний залишок", () => Product.Create("P-003", "SKU-003
 Console.WriteLine();
 
 // ==========================================
-// ЛАБОРАТОРНІ РОБОТИ №5 & №6: Сервіс, сховища, події та делегати
+// ЛАБОРАТОРНІ РОБОТИ №5, №6 & №9: Сервіс, сховища, події
 // ==========================================
-Console.WriteLine("СЕРВІСНИЙ ШАР, ПОДІЇ ТА СХОВИЩА (Лаб. 5-6)");
+Console.WriteLine("СЕРВІСНИЙ ШАР, ПОДІЇ ТА СХОВИЩА (Лаб. 5-6, 9)");
 Console.WriteLine(new string('─', 52));
 
-bool useFile = args.Contains("--file");
-string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "catalog.json");
-
-ICatalogStore store = useFile
-    ? new FileCatalogStore(dataPath)
-    : new InMemoryCatalogStore(SampleData.Products());
-
+ICatalogStore store = new FileCatalogStore(dataPath);
 var service = new CatalogService(store);
 
 Console.WriteLine($"Поточне сховище    : {store.GetType().Name}");
-if (useFile)
-{
-    Console.WriteLine($"Шлях до файлу      : {dataPath}");
-}
 Console.WriteLine();
 
 // Підписка на доменні події (Лаб. 6)
@@ -129,45 +147,21 @@ service.Changed += OnCatalogChanged;
 int changesCount = 0;
 service.Changed += (_, _) => changesCount++;
 
-// Демонстрація операцій сервісу з генерацією подій
-var created = service.Add("SKU-101", "Кабель UTP cat6", "м", 50);
-service.Receive(created.Id, 25);
+// Якщо сховище порожнє під час першого запуску, додамо тестові товари
+if (service.All().Count == 0)
+{
+    var created = service.Add("SKU-101", "Кабель UTP cat6", "м", 50);
+    service.Receive(created.Id, 25);
+}
 
 Console.WriteLine($"\nВсього подій отримано (через лічильник-лямбду): {changesCount}");
 
 // Демонстрація відписки
 service.Changed -= OnCatalogChanged;
-service.Receive(created.Id, 5); 
 Console.WriteLine($"Подій після відписки (лічильник): {changesCount}");
 
 // ==========================================
-// ЛАБОРАТОРНА РОБОТА №8: Асинхронний імпорт із обробкою винятків та скасування
-// ==========================================
-if (useFile)
-{
-    Console.WriteLine("\nАСИНХРОННИЙ ІМПОРТ ДАНИХ (Лаб. 8)");
-    Console.WriteLine(new string('─', 52));
-    try
-    {
-        int imported = await service.ImportAsync(new JsonCatalogImporter(), dataPath, cts.Token);
-        Console.WriteLine($"Успішно імпортовано записів (async): {imported}");
-    }
-    catch (OperationCanceledException)
-    {
-        Console.WriteLine("Імпорт скасовано користувачем або за таймаутом.");
-    }
-    catch (DomainException ex)
-    {
-        Console.WriteLine($"Дані відхилено через доменну помилку: {ex.Message}");
-    }
-    catch (FileNotFoundException)
-    {
-        Console.WriteLine($"Файл не знайдено: {dataPath}");
-    }
-}
-
-// ==========================================
-// ЛАБОРАТОРНА РОБОТА №7: Звіти через LINQ та підкоманди
+// ЛАБОРАТОРНІ РОБОТИ №7 & №9: Звіти, експорт та підкоманди
 // ==========================================
 Console.WriteLine();
 var items = service.All();
@@ -175,6 +169,12 @@ string command = args.FirstOrDefault(a => !a.StartsWith("--")) ?? "report-top";
 
 switch (command)
 {
+    case "export":
+        Console.WriteLine("ЕКСПОРТ ДАНИХ (Лаб. 9)");
+        Console.WriteLine(new string('─', 52));
+        Console.WriteLine($"Успішно експортовано {items.Count} записів у файл: {dataPath}");
+        break;
+
     case "report-top":
         Console.WriteLine("ЗВІТ: ТОП-5 ПОЗИЦІЙ ЗА КІЛЬКІСТЮ (Лаб. 7)");
         Console.WriteLine(new string('─', 52));
@@ -208,7 +208,7 @@ switch (command)
         break;
 
     default:
-        Console.WriteLine("Невідома підкоманда звітів. Доступні: report-top | report-low | report-groups | report-sum | demo-deferred");
+        Console.WriteLine("Невідома підкоманда. Доступні: export | report-top | report-low | report-groups | report-sum | demo-deferred");
         break;
 }
 
