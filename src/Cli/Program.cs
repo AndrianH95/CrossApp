@@ -1,7 +1,10 @@
 ﻿using Core;
-using Core.Dto;
+using Core.Abstractions;
 using Core.Domain;
+using Core.Dto;
 using Core.Import;
+using Core.Services;
+using Core.Storage;
 
 // ==========================================
 // ЛАБОРАТОРНА РОБОТА №1 & №2: Інформація та середовище
@@ -32,34 +35,36 @@ Console.WriteLine("Призначення        : оформлення замо
 // ==========================================
 // ЛАБОРАТОРНА РОБОТА №3: Імпорт даних з файлу
 // ==========================================
-string path = args.Length > 0 ? args[0] : Path.Combine("data", "sample.csv");
-
-if (!File.Exists(path))
+// Автоматично шукаємо sample.csv у стандартних папка (не залежить від args)
+string samplePath = Path.Combine("data", "sample.csv");
+if (!File.Exists(samplePath))
 {
-    Console.WriteLine($"Файл не знайдено: {Path.GetFullPath(path)}");
-    return 1;
+    samplePath = Path.Combine("src", "data", "sample.csv");
 }
 
-ImportResult<ProductDto> result = ProductCsvImporter.Load(path);
-
-Console.WriteLine("ІМПОРТ ДАНИХ З ФАЙЛУ (Лаб. 3)");
-Console.WriteLine(new string('─', 52));
-Console.WriteLine($"Завантажено записів: {result.Items.Count}");
-
-foreach (ProductDto p in result.Items.Take(5))
+if (File.Exists(samplePath))
 {
-    Console.WriteLine($" {p.Id,-6} {p.Sku,-10} {p.Name,-26} {p.Quantity,5} {p.Unit}");
-}
+    ImportResult<ProductDto> result = ProductCsvImporter.Load(samplePath);
 
-if (result.Errors.Count > 0)
-{
-    Console.WriteLine($"\nПропущено рядків: {result.Errors.Count}");
-    foreach (string e in result.Errors)
+    Console.WriteLine("ІМПОРТ ДАНИХ З ФАЙЛУ (Лаб. 3)");
+    Console.WriteLine(new string('─', 52));
+    Console.WriteLine($"Завантажено записів: {result.Items.Count}");
+
+    foreach (ProductDto p in result.Items.Take(5))
     {
-        Console.WriteLine($" ! {e}");
+        Console.WriteLine($" {p.Id,-6} {p.Sku,-10} {p.Name,-26} {p.Quantity,5} {p.Unit}");
     }
+
+    if (result.Errors.Count > 0)
+    {
+        Console.WriteLine($"\nПропущено рядків: {result.Errors.Count}");
+        foreach (string e in result.Errors)
+        {
+            Console.WriteLine($" ! {e}");
+        }
+    }
+    Console.WriteLine();
 }
-Console.WriteLine();
 
 // ==========================================
 // ЛАБОРАТОРНА РОБОТА №4: Доменна модель та інваріанти
@@ -68,17 +73,53 @@ Console.WriteLine("ДОМЕННА МОДЕЛЬ ТА ІНВАРІАНТИ (Лаб
 Console.WriteLine(new string('─', 52));
 
 Console.WriteLine("Сценарій 1: успіх");
-Product product = Product.Create("P-001", "sku-001", "Цемент М400 25кг", "шт", 100);
-Console.WriteLine(product);
-product.RegisterArrival(50);
-product.Issue(30);
-Console.WriteLine(product);
+Product sampleProduct = Product.Create("P-001", "sku-001", "Цемент М400 25кг", "шт", 100);
+Console.WriteLine(sampleProduct);
+sampleProduct.RegisterArrival(50);
+sampleProduct.Issue(30);
+Console.WriteLine(sampleProduct);
 Console.WriteLine();
 
 Console.WriteLine("Сценарій 2: порушення інваріантів");
-TryDo("видача більша за залишок", () => product.Issue(1000));
+TryDo("видача більша за залишок", () => sampleProduct.Issue(1000));
 TryDo("порожній SKU", () => Product.Create("P-002", "", "Пісок", "т", 10));
 TryDo("від'ємний залишок", () => Product.Create("P-003", "SKU-003", "Цегла", "шт", -5));
+Console.WriteLine();
+
+// ==========================================
+// ЛАБОРАТОРНА РОБОТА №5: Сервіс, сховища та ручний DI
+// ==========================================
+Console.WriteLine("СЕРВІСНИЙ ШАР ТА СХОВИЩА (Лаб. 5)");
+Console.WriteLine(new string('─', 52));
+
+bool useFile = args.Contains("--file");
+string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "catalog.json");
+
+ICatalogStore store = useFile
+    ? new FileCatalogStore(dataPath)
+    : new InMemoryCatalogStore(SampleData.Products());
+
+var service = new CatalogService(store);
+
+Console.WriteLine($"Поточне сховище    : {store.GetType().Name}");
+if (useFile)
+{
+    Console.WriteLine($"Шлях до файлу      : {dataPath}");
+}
+
+// Демонстрація роботи сервісу
+var created = service.Add("SKU-101", "Кабель UTP cat6", "м", 50);
+service.Receive(created.Id, 25);
+
+Console.WriteLine("\nВміст сховища через сервіс:");
+foreach (var p in service.All())
+{
+    Console.WriteLine($" {p.Id} {p.Sku,-10} {p.Name,-22} {p.Quantity,5} {p.Unit}");
+}
+
+// Демонстрація обробки помилок у сервісі (сценарій відмови)
+Console.WriteLine("\nСценарій відмови в сервісі:");
+TryDo("отримання по неіснуючому ID", () => service.Receive("non-existent", 10));
 
 static void TryDo(string title, Action action)
 {
