@@ -4,6 +4,7 @@ using Core.Domain;
 using Core.Dto;
 using Core.Events;
 using Core.Import;
+using Core.Reports;
 using Core.Services;
 using Core.Storage;
 
@@ -89,7 +90,7 @@ Console.WriteLine();
 // ==========================================
 // ЛАБОРАТОРНІ РОБОТИ №5 & №6: Сервіс, сховища, події та делегати
 // ==========================================
-Console.WriteLine("СЕРВІСНИЙ ШАР, ПОДІЇ ТА ДЕЛЕГАТИ (Лаб. 5-6)");
+Console.WriteLine("СЕРВІСНИЙ ШАР, ПОДІЇ ТА СХОВИЩА (Лаб. 5-6)");
 Console.WriteLine(new string('─', 52));
 
 bool useFile = args.Contains("--file");
@@ -135,17 +136,82 @@ service.Changed -= OnCatalogChanged;
 service.Receive(created.Id, 5); // Ця операція пройде тихо для консолі та файлу логів
 Console.WriteLine($"Подій після відписки (лічильник): {changesCount}");
 
-// Демонстрація використання Func (FindAll)
-Console.WriteLine("\nФільтрація через FindAll (залишок < 100):");
-var filtered = service.FindAll(p => p.Quantity < 100);
-foreach (var p in filtered)
+// ==========================================
+// ЛАБОРАТОРНА РОБОТА №7: Звіти через LINQ та підкоманди
+// ==========================================
+Console.WriteLine();
+var items = service.All();
+string command = args.FirstOrDefault(a => !a.StartsWith("--")) ?? "report-top";
+
+switch (command)
 {
-    Console.WriteLine($"  {p.Sku} — {p.Name} ({p.Quantity} {p.Unit})");
+    case "report-top":
+        Console.WriteLine("ЗВІТ: ТОП-5 ПОЗИЦІЙ ЗА КІЛЬКІСТЮ (Лаб. 7)");
+        Console.WriteLine(new string('─', 52));
+        PrintStockLines(ReportService.TopByQuantity(items, 5));
+        break;
+
+    case "report-low":
+        Console.WriteLine("ЗВІТ: ДЕФІЦИТНІ ПОЗИЦІЇ (< 10) (Лаб. 7)");
+        Console.WriteLine(new string('─', 52));
+        PrintStockLines(ReportService.LowStock(items, 10));
+        break;
+
+    case "report-groups":
+        Console.WriteLine("ЗВІТ: ГРУПУВАННЯ ЗА ОДИНИЦЯМИ (Лаб. 7)");
+        Console.WriteLine(new string('─', 52));
+        foreach (var g in ReportService.ByUnit(items))
+        {
+            Console.WriteLine($" {g.Key,-6} позицій: {g.Count,3}  сумарно: {g.TotalQuantity,6}");
+        }
+        break;
+
+    case "report-sum":
+        Console.WriteLine("ЗВІТ: ПІДСУМКОВІ АГРЕГАТИ (Лаб. 7)");
+        Console.WriteLine(new string('─', 52));
+        var t = ReportService.Totals(items);
+        Console.WriteLine($" позицій: {t.Items}, всього: {t.Total}, середнє: {t.Average:F2}, макс: {t.Max}");
+        break;
+
+    case "demo-deferred":
+        RunDeferredExecutionDemo(service);
+        break;
+
+    default:
+        Console.WriteLine("Невідома підкоманда звітів. Доступні: report-top | report-low | report-groups | report-sum | demo-deferred");
+        break;
 }
 
 // Сценарій відмови в сервісі
 Console.WriteLine("\nСценарій відмови в сервісі:");
 TryDo("отримання по неіснуючому ID", () => service.Receive("non-existent", 10));
+
+static void PrintStockLines(IReadOnlyList<StockLine> lines)
+{
+    foreach (var l in lines)
+    {
+        Console.WriteLine($" {l.Sku,-10} {l.Name,-26} {l.Quantity,6} {l.Unit}");
+    }
+}
+
+static void RunDeferredExecutionDemo(CatalogService service)
+{
+    Console.WriteLine("ДЕМОНСТРАЦІЯ ВІДКЛАДЕНОГО ВИКОНАННЯ (Лаб. 7)");
+    Console.WriteLine(new string('─', 52));
+
+    var source = service.All().ToList();
+    var query = source.Where(p => p.Quantity < 10); // Запит побудовано, але не виконано
+
+    Console.WriteLine($" Дефіцитних до змін: {query.Count()}");
+
+    source.Add(Product.Create("tmp00001", "SKU-999", "Скоба", "шт", 3));
+    Console.WriteLine($" Дефіцитних після змін (запит виконано повторно): {query.Count()}");
+
+    var snapshot = query.ToList();
+    source.Clear();
+
+    Console.WriteLine($" У знімку (snapshot) лишилось: {snapshot.Count} (дані зафіксовані)");
+}
 
 static void TryDo(string title, Action action)
 {
