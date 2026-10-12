@@ -2,12 +2,13 @@
 using Core.Abstractions;
 using Core.Domain;
 using Core.Dto;
+using Core.Events;
 using Core.Import;
 using Core.Services;
 using Core.Storage;
 
 // ==========================================
-// ЛАБОРАТОРНА РОБОТА №1 & №2: Інформація та середовище
+// ЛАБОРАТОРНІ РОБОТИ №1 & №2: Середовище та предметна область
 // ==========================================
 EnvironmentReport report = EnvironmentInfo.Collect();
 
@@ -35,7 +36,6 @@ Console.WriteLine("Призначення        : оформлення замо
 // ==========================================
 // ЛАБОРАТОРНА РОБОТА №3: Імпорт даних з файлу
 // ==========================================
-// Автоматично шукаємо sample.csv у стандартних папка (не залежить від args)
 string samplePath = Path.Combine("data", "sample.csv");
 if (!File.Exists(samplePath))
 {
@@ -87,9 +87,9 @@ TryDo("від'ємний залишок", () => Product.Create("P-003", "SKU-003
 Console.WriteLine();
 
 // ==========================================
-// ЛАБОРАТОРНА РОБОТА №5: Сервіс, сховища та ручний DI
+// ЛАБОРАТОРНІ РОБОТИ №5 & №6: Сервіс, сховища, події та делегати
 // ==========================================
-Console.WriteLine("СЕРВІСНИЙ ШАР ТА СХОВИЩА (Лаб. 5)");
+Console.WriteLine("СЕРВІСНИЙ ШАР, ПОДІЇ ТА ДЕЛЕГАТИ (Лаб. 5-6)");
 Console.WriteLine(new string('─', 52));
 
 bool useFile = args.Contains("--file");
@@ -106,18 +106,44 @@ if (useFile)
 {
     Console.WriteLine($"Шлях до файлу      : {dataPath}");
 }
+Console.WriteLine();
 
-// Демонстрація роботи сервісу
+// Підписка на доменні події (Лаб. 6)
+var logPath = Path.Combine(AppContext.BaseDirectory, "logs", "app.log");
+Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+
+void OnCatalogChanged(object? sender, CatalogChangedEventArgs e)
+{
+    var line = $"{e.At:HH:mm:ss} {e.Kind,-8} {e.Id} {e.Delta,4:+0;-0} → залишок {e.QuantityAfter}";
+    Console.WriteLine($"[ПОДІЯ] {line}");
+    File.AppendAllText(logPath, line + Environment.NewLine);
+}
+
+service.Changed += OnCatalogChanged;
+
+int changesCount = 0;
+service.Changed += (_, _) => changesCount++;
+
+// Демонстрація операцій сервісу з генерацією подій
 var created = service.Add("SKU-101", "Кабель UTP cat6", "м", 50);
 service.Receive(created.Id, 25);
 
-Console.WriteLine("\nВміст сховища через сервіс:");
-foreach (var p in service.All())
+Console.WriteLine($"\nВсього подій отримано (через лічильник-лямбду): {changesCount}");
+
+// Демонстрація відписки
+service.Changed -= OnCatalogChanged;
+service.Receive(created.Id, 5); // Ця операція пройде тихо для консолі та файлу логів
+Console.WriteLine($"Подій після відписки (лічильник): {changesCount}");
+
+// Демонстрація використання Func (FindAll)
+Console.WriteLine("\nФільтрація через FindAll (залишок < 100):");
+var filtered = service.FindAll(p => p.Quantity < 100);
+foreach (var p in filtered)
 {
-    Console.WriteLine($" {p.Id} {p.Sku,-10} {p.Name,-22} {p.Quantity,5} {p.Unit}");
+    Console.WriteLine($"  {p.Sku} — {p.Name} ({p.Quantity} {p.Unit})");
 }
 
-// Демонстрація обробки помилок у сервісі (сценарій відмови)
+// Сценарій відмови в сервісі
 Console.WriteLine("\nСценарій відмови в сервісі:");
 TryDo("отримання по неіснуючому ID", () => service.Receive("non-existent", 10));
 
