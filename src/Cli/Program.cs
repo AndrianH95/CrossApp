@@ -8,6 +8,10 @@ using Core.Reports;
 using Core.Services;
 using Core.Storage;
 
+// Налаштування кооперативного скасування (Ctrl+C)
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
 // ==========================================
 // ЛАБОРАТОРНІ РОБОТИ №1 & №2: Середовище та предметна область
 // ==========================================
@@ -133,8 +137,34 @@ Console.WriteLine($"\nВсього подій отримано (через лі�
 
 // Демонстрація відписки
 service.Changed -= OnCatalogChanged;
-service.Receive(created.Id, 5); // Ця операція пройде тихо для консолі та файлу логів
+service.Receive(created.Id, 5); 
 Console.WriteLine($"Подій після відписки (лічильник): {changesCount}");
+
+// ==========================================
+// ЛАБОРАТОРНА РОБОТА №8: Асинхронний імпорт із обробкою винятків та скасування
+// ==========================================
+if (useFile)
+{
+    Console.WriteLine("\nАСИНХРОННИЙ ІМПОРТ ДАНИХ (Лаб. 8)");
+    Console.WriteLine(new string('─', 52));
+    try
+    {
+        int imported = await service.ImportAsync(new JsonCatalogImporter(), dataPath, cts.Token);
+        Console.WriteLine($"Успішно імпортовано записів (async): {imported}");
+    }
+    catch (OperationCanceledException)
+    {
+        Console.WriteLine("Імпорт скасовано користувачем або за таймаутом.");
+    }
+    catch (DomainException ex)
+    {
+        Console.WriteLine($"Дані відхилено через доменну помилку: {ex.Message}");
+    }
+    catch (FileNotFoundException)
+    {
+        Console.WriteLine($"Файл не знайдено: {dataPath}");
+    }
+}
 
 // ==========================================
 // ЛАБОРАТОРНА РОБОТА №7: Звіти через LINQ та підкоманди
@@ -200,7 +230,7 @@ static void RunDeferredExecutionDemo(CatalogService service)
     Console.WriteLine(new string('─', 52));
 
     var source = service.All().ToList();
-    var query = source.Where(p => p.Quantity < 10); // Запит побудовано, але не виконано
+    var query = source.Where(p => p.Quantity < 10);
 
     Console.WriteLine($" Дефіцитних до змін: {query.Count()}");
 
